@@ -3,6 +3,7 @@
 
 # Comment this line to get more verbose messages from this Makefile
 V=@
+DEBUG = -Wall -Wextra
 
 # Add your debugging flag (or not) to CFLAGS
 ifeq ($(DEBUG),y)

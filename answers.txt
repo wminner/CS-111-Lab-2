@@ -14,9 +14,31 @@ Student ID: Your ID Here
 Email: Your Email Here
 
 # Partner 2
-#Name: Partner's Name Here
-#Student ID: Partner's ID Here
-#Email: Partner's Email Here
+Name: Wesley Minner
+Student ID: 703549234
+Email: wesleyminner@gmail.com
 
 
 # Add any other information you'd like us to have below this line.
+
+TODO:
+* osprd_process_request function
+	read (-r)
+	write (-w)
+* osprd_close_last function
+	close ramdisk
+* osprd_ioctl function
+	lock spin (-l)
+	lock tryagain (-L)
+	lock release
+* Deadlocks
+	add TA's test case to tester script
+	implement fix for test case
+
+
+Notes:
+* N/A
+
+
+Known Issues:
+* N/A
