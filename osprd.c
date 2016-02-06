@@ -34,7 +34,7 @@
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION("CS 111 RAM Disk");
 // EXERCISE: Pass your names into the kernel as the module's authors.
-MODULE_AUTHOR("Skeletor");
+MODULE_AUTHOR("Christie Mathews & Wesley Minner");
 
 #define OSPRD_MAJOR	222
 
@@ -120,7 +120,18 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 	// Consider the 'req->sector', 'req->current_nr_sectors', and
 	// 'req->buffer' members, and the rq_data_dir() function.
 
-	// Your code here.
+	// Memory Offset from char* data
+	unsigned long memory_offset_rw = ((req->sector)*SECTOR_SIZE);
+ 	// Number of Bytes to Read/Write
+	unsigned long bytes_to_rw = (req->nr_sectors)*SECTOR_SIZE;    
+	// PERFORM READ
+	if ( rq_data_dir(req) == READ ) {  
+	
+	} 
+	// PERFORM WRITE
+	if ( rq_data_dir(req) == WRITE ) { 
+
+	}
 	eprintk("Should process request...\n");
 
 	end_request(req, 1);
