@@ -107,6 +107,10 @@ static void for_each_open_file(struct task_struct *task,
  */
 static void osprd_process_request(osprd_info_t *d, struct request *req)
 {
+	unsigned req_type;		// Request type: READ or WRITE
+	uint8_t *data_offset;	// Pointer to data we are working with (in Ramdisk)
+	size_t bytes_to_rw;		// Number of bytes to read/write
+
 	if (!blk_fs_request(req)) {
 		end_request(req, 0);
 		return;
@@ -120,17 +124,20 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 	// Consider the 'req->sector', 'req->current_nr_sectors', and
 	// 'req->buffer' members, and the rq_data_dir() function.
 
-	// Memory Offset from char* data
-	unsigned long memory_offset_rw = ((req->sector)*SECTOR_SIZE);
+	// Memory Offset from char* data (sector address + address of data within sector)
+	data_offset = (req->sector)*SECTOR_SIZE + d->data;
  	// Number of Bytes to Read/Write
-	unsigned long bytes_to_rw = (req->nr_sectors)*SECTOR_SIZE;    
+	bytes_to_rw = (req->current_nr_sectors)*SECTOR_SIZE;
+	// Get request type
+	req_type = rq_data_dir(req);
+
 	// PERFORM READ
-	if ( rq_data_dir(req) == READ ) {  
-	
+	if ( req_type == READ ) {
+		memcpy( (void*) req->buffer, (void*) data_offset, bytes_to_rw );
 	} 
 	// PERFORM WRITE
-	if ( rq_data_dir(req) == WRITE ) { 
-
+	if ( req_type == WRITE ) {
+		memcpy( (void*) data_offset, (void*) req->buffer, bytes_to_rw );
 	}
 	eprintk("Should process request...\n");
 
