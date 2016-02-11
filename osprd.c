@@ -33,7 +33,7 @@
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION("CS 111 RAM Disk");
-// EXERCISE: Pass your names into the kernel as the module's authors.
+// EXERCISE (DONE): Pass your names into the kernel as the module's authors.
 MODULE_AUTHOR("Christie Mathews & Wesley Minner");
 
 #define OSPRD_MAJOR	222
@@ -116,7 +116,7 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 		return;
 	}
 
-	// EXERCISE: Perform the read or write request by copying data between
+	// EXERCISE (DONE): Perform the read or write request by copying data between
 	// our data array and the request's buffer.
 	// Hint: The 'struct request' argument tells you what kind of request
 	// this is, and which sectors are being read or written.
@@ -139,7 +139,7 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 	if ( req_type == WRITE ) {
 		memcpy( (void*) data_offset, (void*) req->buffer, bytes_to_rw );
 	}
-	eprintk("Should process request...\n");
+	//eprintk("Should process request...\n");
 
 	end_request(req, 1);
 }

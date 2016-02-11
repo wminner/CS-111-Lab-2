@@ -9,9 +9,9 @@
 # the end of the file.
 
 # Partner 1
-Name: Your Name Here
-Student ID: Your ID Here
-Email: Your Email Here
+Name: Christie Mathews
+Student ID: 104404412
+Email: mathews.christie@gmail.com 
 
 # Partner 2
 Name: Wesley Minner
@@ -21,10 +21,12 @@ Email: wesleyminner@gmail.com
 
 # Add any other information you'd like us to have below this line.
 
-TODO:
+Tasks Completed:
 * osprd_process_request function
 	read (-r)
 	write (-w)
+
+TODO:
 * osprd_close_last function
 	close ramdisk
 * osprd_ioctl function
