@@ -240,8 +240,16 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// be protected by a spinlock; which ones?)
 
 		// Your code here (instead of the next two lines).
-		eprintk("Attempting to acquire\n");
-		r = -ENOTTY;
+		if (filp_writable) {
+			// Atempt to write-lock
+			spin_lock(d->mutex);
+
+		} else {	// Otherwise attempt to read-lock
+
+		}
+
+		// eprintk("Attempting to acquire\n");
+		// r = -ENOTTY;
 
 	} else if (cmd == OSPRDIOCTRYACQUIRE) {
 

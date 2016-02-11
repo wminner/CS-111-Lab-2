@@ -34,7 +34,8 @@ TODO:
 	lock tryagain (-L)
 	lock release
 * Deadlocks
-	add TA's test case to tester script
+	add TA's test case to tester script:
+		"echo foo | ./osprdaccess -w -l /dev/osprda /dev/osprda"
 	implement fix for test case
 
 
