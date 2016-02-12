@@ -52,6 +52,8 @@ typedef struct osprd_info {
 
 	osp_spinlock_t mutex;           // Mutex for synchronizing access to
 					// this block device
+	int num_readers;			// Number of readers, range [0,inf]
+	int num_writers;			// Number of writers, range [0,1]
 
 	unsigned ticket_head;		// Currently running ticket for
 					// the device lock
@@ -242,10 +244,25 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Your code here (instead of the next two lines).
 		if (filp_writable) {
 			// Atempt to write-lock
-			spin_lock(d->mutex);
-
+			while ( spin_lock(&mutex) < 0 )		// Keep trying to get access device mutex (assume this should not happen if ticket was issued and queued correctly)
+				continue;
+			if ( d->num_readers == 0 && d->num_writers == 0 ) {	// If no readers or writers...
+				d->num_writers++;
+			} else {	// Otherwise if some readers or writers...
+				// Write process spin (not blocked)
+				schedule();			// Schedule next process
+			}
+			spin_unlock(&mutex);	// Release mutex
 		} else {	// Otherwise attempt to read-lock
-
+			while ( spin_lock(&mutex) < 0 )		// Keep trying to get access device mutex (assume this should not happen if ticket was issued and queued correctly)
+				continue;
+			if ( d->num_writers == 0 ) {		// If no writers (multiple readers OK)
+				d->num_readers++;
+			} else {	// Otherwise if someone else writing...
+				// Read process spin (not blocked)
+				schedule();			// Schedule next process
+			}
+			spin_unlock(&mutex);	// Release mutex
 		}
 
 		// eprintk("Attempting to acquire\n");
@@ -273,8 +290,44 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// the wait queue, perform any additional accounting steps
 		// you need, and return 0.
 
+		if (filp_writable) {	// If writer...
+			// Get mutex
+			while ( spin_lock(&mutex) < 0 )		// Keep trying to get access device mutex
+				continue;
+			// Check new num_writers will be valid
+			// TODO: check process releasing actually has a write lock (check filp->f_flags)
+			if ( d->num_writers - 1 < 0 ) {
+				eprintk("Error: Too many processes released write lock!\n");
+				r = -EINVAL;
+			} else {
+				// If not, decrement num_writers
+				d->num_writers--;
+				// TODO: clear f_flags
+				// TODO: wake up wait queue and serve next ticket
+			}
+			// Release mutex
+			spin_unlock(&mutex);
+		} else {				// If reader...
+			// Get mutex
+			while ( spin_lock(&mutex) < 0 )		// Keep trying to get access device mutex
+				continue;
+			// Check new num_readers will be valid
+			// TODO: check process releasing actually has a read lock (check filp->f_flags)
+			if ( d->num_readers - 1 < 0 ) {
+				eprintk("Error: Too many processes released read lock!\n");
+				r = -EINVAL;
+			} else {
+				// If not, decrement num_readers
+				d->num_readers--;
+				// TODO: clear f_flags
+				// TODO: wake up wait queue and serve next ticket
+			}
+			// Release mutex
+			spin_unlock(&mutex);
+		}
+		
 		// Your code here (instead of the next line).
-		r = -ENOTTY;
+		// r = -ENOTTY;
 
 	} else
 		r = -ENOTTY; /* unknown command */
@@ -291,6 +344,8 @@ static void osprd_setup(osprd_info_t *d)
 	osp_spin_lock_init(&d->mutex);
 	d->ticket_head = d->ticket_tail = 0;
 	/* Add code here if you add fields to osprd_info_t. */
+	d->num_readers = 0;
+	d->num_writers = 0;
 }
 
 
