@@ -53,7 +53,7 @@ typedef struct ticket_list {
 
 /* Linked list of pids */
 typedef struct pid_list {
-	pid_t pid;
+	pid_t pid_num;
 	struct list_head list;
 } pid_list_t;
 
@@ -96,10 +96,10 @@ static osprd_info_t osprds[NOSPRD];
 
 
 // Declare useful helper functions
-unsigned skip_invalid_tickets(unsigned next_ticket, ticket_list_t invalid_tickets);
-void add_to_ticket_list(unsigned new_ticket, ticket_list_t ticket_list);
-void add_to_pid_list(pid_t pid, pid_list_t pid_list);
-int remove_from_pid_list(pid_t pid, pid_list_t pid_list);
+unsigned skip_invalid_tickets(unsigned next_ticket, ticket_list_t *invalid_tickets);
+int add_to_ticket_list(unsigned new_ticket, ticket_list_t *ticket_list);
+int add_to_pid_list(pid_t new_pid, pid_list_t *pid_list);
+int remove_from_pid_list(pid_t rm_pid, pid_list_t *pid_list);
 
 /*
  * file2osprd(filp)
@@ -265,10 +265,10 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// For our implementation, define...
 		// 	 ticket_head as front of the line (next to be served)
 		// 	 ticket_tail as back of the line (last to be served)
-		osp_spin_lock(&(d->mutex));
+		osp_spin_lock(&d->mutex));
 		local_ticket = d->ticket_tail;	// Give process end of the line ticket
 		d->ticket_tail++;				// Extend end of line, prepping for next process
-		osp_spin_unlock(&(d->mutex));
+		osp_spin_unlock(&d->mutex));
 
 		if (filp_writable) {	// Write-lock
 
@@ -277,35 +277,38 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				return -EDEADLK;
 
 			// Don't wait condition: if this process is being served and there are no writing or reading pids; otherwise wait
-			if ( wait_event_interruptible(d->blockq, d->ticket_head == local_ticket && d->write_lock_pids == 0 && list_empty(&(d->read_lock_pids.list)) ) {
+			if ( wait_event_interruptible(d->blockq, d->ticket_head == local_ticket && d->write_lock_pids == 0 && list_empty(&d->read_lock_pids.list)) ) {
 				// In here means we got a signal and need to handle now invalid ticket
-				osp_spin_lock(&(d->mutex));
+				osp_spin_lock(&d->mutex));
 
 				if ( d->ticket_head == local_ticket ) {		// If this process (dead) was next in line...
 					// Don't need to add to invalid ticket list because implicit in next function call
 					// Get next ticket to be served, skipping any invalid tickets
-					d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &(d->invalid_tickets));
+					d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &d->invalid_tickets));
 					// Wake up waiting processes
-					wake_up_all(&(d->blockq));
+					wake_up_all(&d->blockq));
 				} else {	// Else if this process (dead) not next in line...
 					// Add current ticket to invalid list
-					add_to_ticket_list(local_ticket, &(d->invalid_tickets));
+					if ( add_to_ticket_list(local_ticket, &d->invalid_tickets)) < 0 ) {
+						eprintk("Error: could not allocate memory.\n");
+						return -EINVAL;
+					}
 				}
 
-				osp_spin_unlock(&(d->mutex));
+				osp_spin_unlock(&d->mutex));
 				r = -ERESTARTSYS;
 			} else {	// Don't wait condition was true; grant write-lock
 				filp->f_flags |= F_OSPRD_LOCKED;
 				
 				// Set writing pid to current pid (list of one)
-				osp_spin_lock(&(d->mutex));
+				osp_spin_lock(&d->mutex));
 				d->write_lock_pids = current->pid;
 
 				// Serve next ticket
-				d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &(d->invalid_tickets));
-				wake_up_all(&(d->blockq));
+				d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &d->invalid_tickets));
+				wake_up_all(&d->blockq));
 
-				osp_spin_unlock(&(d->mutex));
+				osp_spin_unlock(&d->mutex));
 			}
 		} else {	// Read-lock
 
@@ -314,33 +317,39 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			// Don't wait condition: if this process is being served and there are no writing pids; otherwise wait
 			if ( wait_event_interruptible(d->blockq, d->ticket_head == local_ticket && d->write_lock_pids == 0) ) {
 				// In here means we got a signal and need to handle now invalid ticket
-				osp_spin_lock(&(d->mutex));
+				osp_spin_lock(&d->mutex));
 
 				if ( d->ticket_head == local_ticket ) {		// If this process (dead) was next in line...
 					// Don't need to add to invalid ticket list because implicit in next function call
 					// Get next ticket to be served, skipping any invalid tickets
-					d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &(d->invalid_tickets));
+					d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &d->invalid_tickets));
 					// Wake up waiting processes
-					wake_up_all(&(d->blockq));
+					wake_up_all(&d->blockq));
 				} else {	// Else if this process (dead) not next in line...
 					// Add current ticket to invalid list
-					add_to_ticket_list(local_ticket, &(d->invalid_tickets));
+					if ( add_to_ticket_list(local_ticket, &d->invalid_tickets)) < 0 ) {
+						eprintk("Error: could not allocate memory.\n");
+						return -EINVAL;
+					}
 				}
 
-				osp_spin_unlock(&(d->mutex));
+				osp_spin_unlock(&d->mutex));
 				r = -ERESTARTSYS;
 			} else {	// Don't wait condition was true; grand read-lock
 				filp->f_flags |= F_OSPRD_LOCKED;
 
 				// Add pid to reading pid list
-				osp_spin_lock(&(d->mutex));
-				add_to_pid_list(current->pid, &(d->read_lock_pids));
+				osp_spin_lock(&d->mutex));
+				if ( add_to_pid_list(current->pid, &d->read_lock_pids)) < 0 ) {
+					eprintk("Error: could not allocate memory.\n");
+					return -EINVAL;
+				}
 
 				// Serve next ticket
-				d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &(d->invalid_tickets));
-				wake_up_all(&(d->blockq));
+				d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &d->invalid_tickets));
+				wake_up_all(&d->blockq));
 
-				osp_spin_unlock(&(d->mutex));
+				osp_spin_unlock(&d->mutex));
 			}
 		}
 
@@ -373,33 +382,33 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			
 			// TODO deadlock detection
 
-			osp_spin_lock(&(d->mutex));
+			osp_spin_lock(&d->mutex));
 			// If write lock was set and pid matched current pid...
 			if ( d->write_lock_pids == current->pid ) {
 				d->write_lock_pids = 0;		// Remove pid from writers list
 				filp->f_flags ^= F_OSPRD_LOCKED;	// Clear LOCKED flag
-				wake_up_all(&(d->blockq));
+				wake_up_all(&d->blockq));
 			} else {
 				eprintk("Error: Unlocking ramdisk; this file did not lock the ramdisk!\n");
 				r = -EINVAL;
 			}
-			osp_spin_unlock(&(d->mutex));
+			osp_spin_unlock(&d->mutex));
 
 		} else {	// If reader...
 			
 			// TODO deadlock detection
 
-			osp_spin_lock(&(d->mutex));
+			osp_spin_lock(&d->mutex));
 			// If read lock was set and pid matched one of the read lock pids...
 			// Look through read lock list for current pid and remove it if found
-			if ( remove_from_pid_list(current->pid, &(d->read_lock_pids)) ) {
+			if ( remove_from_pid_list(current->pid, &d->read_lock_pids)) ) {
 				filp->f_flags ^= F_OSPRD_LOCKED;
-				wake_up_all(&(d->blockq));
+				wake_up_all(&d->blockq));
 			} else {
 				eprintk("Error: Unlocking ramdisk; this file did not lock the ramdisk!\n");
 				r = -EINVAL;
 			}
-			osp_spin_unlock(&(d->mutex));
+			osp_spin_unlock(&d->mutex));
 		}
 		
 		// Your code here (instead of the next line).
@@ -410,36 +419,89 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 	return r;
 }
 
+/* 
+ * skip_invalid_tickets( next_ticket, invalid_ticket_list)
+ *   Find the next valid ticket by skipping invalid tickets.
+ *   Must search from start of invalid ticket list each time in case processes die
+ *   out of order.  Returns the next valid ticket;
+ */
 unsigned skip_invalid_tickets(unsigned next_ticket, ticket_list_t *invalid_tickets) {
-	unsigned return_ticket;
-	// TODO:
+	struct list_head *ptr;
+	ticket_list_t *entry;
+	unsigned return_ticket = next_ticket;
+
 	// For each ticket in linked list
-		// If next_ticket matches any tickets... (recurse)
-			// return_ticket = skip_invalid_tickets(next_ticket+1, struct list_head invalid_tickets)
+	list_for_each(ptr, &invalid_tickets->list) {
+		
+		// Get struct that contains the current list
+		entry = list_entry(ptr, ticket_list_t, list)
+		
+		// If next_ticket matches any invalid tickets...
+		if ( entry.ticket_num == next_ticket ) {
+			// Recurse with incremented next_ticket
+			return_ticket = skip_invalid_tickets(next_ticket+1, invalid_tickets)
+			break;
+		}
+	}
+	return return_ticket;
 }
 
-void add_to_ticket_list(unsigned new_ticket, ticket_list_t *ticket_list) {
-	// TODO:
+int add_to_ticket_list(unsigned new_ticket, ticket_list_t *ticket_list) {
+	ticket_list_t *new;
+
 	// Allocate memory for new ticket_list_t
-	// Get pointer to list_head of new memory
-	// Add to tail of ticket_list
-	list_add_tail(new, &(ticket_list->list));
+	new = (ticket_list_t*) kmalloc(sizeof(ticket_list_t), GFP_ATOMIC);
+	
+	if (new) {
+		// Save desired ticket number
+		new.ticket_num = new_ticket;
+		
+		// Add to tail of ticket_list
+		list_add_tail(&new->list, &ticket_list->list));
+		return 0;
+	} else
+		return -1;
 }
 
-void add_to_pid_list(pid_t new_pid, pid_list_t *pid_list) {
-	// TODO:
+int add_to_pid_list(pid_t new_pid, pid_list_t *pid_list) {
+	pid_list_t *new;
+
 	// Allocate memory for new pid_list_t
-	// Get pointer to list_head of new memory
-	// Add to tail of pid_list
-	list_add_tail(new, &(pid_list->list));
+	new = (pid_list_t*) kmalloc(sizeof(pid_list_t), GFP_ATOMIC);
+	
+	if (new) {
+		// Save desired pid number
+		new.pid_num = new_pid;
+		
+		// Add to tail of pid_list
+		list_add_tail(&new->list, &pid_list->list));
+		return 0;
+	} else
+		return -1;
 }
 
-int remove_from_pid_list(pid_t pid, pid_list_t *pid_list) {
-	// TODO:
+int remove_from_pid_list(pid_t rm_pid, pid_list_t *pid_list) {
+	struct list_head *ptr;
+	pid_list_t *entry;
+
+	// List empty
+	if ( list_empty(&pid_list->list) )
+		return 0;
+
 	// For each pid in linked list
-		// If pid matches any pid in list
-			// Remove it and return 1
-	// return 0 if pid not found in list
+	list_for_each(ptr, &pid_list->list) {
+		entry = list_entry(ptr, pid_list_t, list)
+		
+		// If rm_pid matches any pid in list
+		if ( entry.pid_num == rm_pid ) {
+			// Remove it from list, free memory, and return 1
+			list_del(&entry->list)
+			kfree((void*) entry);
+			return 1;
+		}
+	}		
+	// rm_pid not found in list
+	return 0;
 }
 
 
@@ -453,8 +515,8 @@ static void osprd_setup(osprd_info_t *d)
 	d->ticket_head = d->ticket_tail = 0;
 	/* Add code here if you add fields to osprd_info_t. */
 	d->write_lock_pids = 0;
-	INIT_LIST_HEAD(&(d->read_lock_pids.list));
-	INIT_LIST_HEAD(&(d->invalid_tickets.list));
+	INIT_LIST_HEAD(&d->read_lock_pids.list));
+	INIT_LIST_HEAD(&d->invalid_tickets.list));
 }
 
 
