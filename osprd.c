@@ -13,6 +13,7 @@
 #include <linux/blkdev.h>
 #include <linux/wait.h>
 #include <linux/file.h>
+#include <linux/list.h>	   /* linked list for pids */
 
 #include "spinlock.h"
 #include "osprd.h"
@@ -44,6 +45,17 @@ MODULE_AUTHOR("Christie Mathews & Wesley Minner");
 static int nsectors = 32;
 module_param(nsectors, int, 0);
 
+/* Linked list of tickets */
+typedef struct ticket_list {
+	unsigned ticket_num;
+	struct list_head list;
+} ticket_list_t;
+
+/* Linked list of pids */
+typedef struct pid_list {
+	pid_t pid;
+	struct list_head list;
+} pid_list_t;
 
 /* The internal representation of our device. */
 typedef struct osprd_info {
@@ -61,11 +73,17 @@ typedef struct osprd_info {
 	unsigned ticket_tail;		// Next available ticket for
 					// the device lock
 
+	ticket_list_t invalid_tickets;	// Linked list to store invalid tickets
+
 	wait_queue_head_t blockq;       // Wait queue for tasks blocked on
 					// the device lock
 
 	/* HINT: You may want to add additional fields to help
 	         in detecting deadlock. */
+
+	// Lists to store processes holding locks
+	pid_list_t read_lock_pids;		// Linked list of pids currently reading
+	pid_t write_lock_pids;				// Only need a list of one for pids currently writing
 
 	// The following elements are used internally; you don't need
 	// to understand them.
@@ -193,6 +211,7 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 int osprd_ioctl(struct inode *inode, struct file *filp,
 		unsigned int cmd, unsigned long arg)
 {
+	unsigned local_ticket;
 	osprd_info_t *d = file2osprd(filp);	// device info
 	int r = 0;			// return value: initially 0
 
@@ -241,28 +260,65 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// (Some of these operations are in a critical section and must
 		// be protected by a spinlock; which ones?)
 
-		// Your code here (instead of the next two lines).
-		if (filp_writable) {
-			// Atempt to write-lock
-			while ( spin_lock(&mutex) < 0 )		// Keep trying to get access device mutex (assume this should not happen if ticket was issued and queued correctly)
-				continue;
-			if ( d->num_readers == 0 && d->num_writers == 0 ) {	// If no readers or writers...
-				d->num_writers++;
-			} else {	// Otherwise if some readers or writers...
-				// Write process spin (not blocked)
-				schedule();			// Schedule next process
+		// For our implementation, define...
+		// 	 ticket_head as front of the line (next to be served)
+		// 	 ticket_tail as back of the line (last to be served)
+		spin_lock(&(d->mutex));
+		local_ticket = d->ticket_tail;	// Give process end of the line ticket
+		d->ticket_tail++;				// Extend end of line, prepping for next process
+		spin_unlock(&(d->mutex));
+
+		if (filp_writable) {	// Write-lock
+
+			// Deadlock detection (don't allow writer to lock twice)
+			if (current->pid == write_lock_pids)
+				return -EDEADLK;
+
+			// Don't wait condition: if this process is being served and there are no writing or reading pids; otherwise wait
+			if ( wait_event_interruptible(d->blockq, d->ticket_head == local_ticket && d->write_lock_pids == 0 && d->read_lock_pids.list.list_empty()) ) {
+				// In here means we got a signal and need to handle now invalid ticket
+				spin_lock(&(d->mutex));
+				if ( d->ticket_head == local_ticket ) {		// If this process (dead) was next in line...
+					// Don't need to add to invalid ticket list because implicit in next function call
+					// Get next ticket to be served, skipping any invalid tickets
+					d->ticket_head = skip_invalid_tickets(d->ticket_head+1, d->invalid_tickets);
+					// Wake up waiting processes
+					wake_up_all(&(d->blockq));
+				} else {	// Else if this process (dead) not next in line...
+					// Add current ticket to invalid list
+					add_ticket_to_list(local_ticket, d->invalid_tickets);
+				}
+
+				spin_unlock(&(d->mutex));
+				r = -ERESTARTSYS;
+			} else {	// Wait condition was true; grant write-lock
+				filp->f_flags |= F_OSPRD_LOCKED;
+				
+				// Set writing pid to current pid (list of one)
+				spin_lock(&(d->mutex));
+				d->write_lock_pids = current->pid;
+				d->ticket_head = skip_invalid_tickets(d->ticket_head+1, d->invalid_tickets);
+				spin_unlock(&(d->mutex));
 			}
-			spin_unlock(&mutex);	// Release mutex
-		} else {	// Otherwise attempt to read-lock
-			while ( spin_lock(&mutex) < 0 )		// Keep trying to get access device mutex (assume this should not happen if ticket was issued and queued correctly)
-				continue;
-			if ( d->num_writers == 0 ) {		// If no writers (multiple readers OK)
-				d->num_readers++;
-			} else {	// Otherwise if someone else writing...
-				// Read process spin (not blocked)
-				schedule();			// Schedule next process
+		} else {	// Read-lock
+
+			// TODO deadlock detection (none?)
+
+			// Don't wait condition: if this process is being served and there are no writing pids; otherwise wait
+			if ( wait_event_interruptible(d->blockq, d->ticket_head == local_ticket && d->write_lock_pids == 0) ) {
+				// In here means we got a signal and need to handle now invalid ticket
+				spinlock(&(d->mutex));
+				if ( d->ticket_head == local_ticket ) {		// If this process (dead) was next in line...
+					// Don't need to add to invalid ticket list because implicit in next function call
+					// Get next ticket to be served, skipping any invalid tickets
+					d->ticket_head = skip_invalid_tickets(d->ticket_head+1, d->invalid_tickets);
+					// Wake up waiting processes
+					wake_up_all(&(d->blockq));
+				} else {	// Else if this process (dead) not next in line...
+					// Add current ticket to invalid list
+					add_ticket_to_list(local_ticket, d->invalid_tickets);
+				}
 			}
-			spin_unlock(&mutex);	// Release mutex
 		}
 
 		// eprintk("Attempting to acquire\n");
@@ -292,7 +348,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 		if (filp_writable) {	// If writer...
 			// Get mutex
-			while ( spin_lock(&mutex) < 0 )		// Keep trying to get access device mutex
+			while ( spin_lock(&(d->mutex)) < 0 )		// Keep trying to get access device mutex
 				continue;
 			// Check new num_writers will be valid
 			// TODO: check process releasing actually has a write lock (check filp->f_flags)
@@ -306,10 +362,10 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				// TODO: wake up wait queue and serve next ticket
 			}
 			// Release mutex
-			spin_unlock(&mutex);
+			spin_unlock(&(d->mutex));
 		} else {				// If reader...
 			// Get mutex
-			while ( spin_lock(&mutex) < 0 )		// Keep trying to get access device mutex
+			while ( spin_lock(&(d->mutex)) < 0 )		// Keep trying to get access device mutex
 				continue;
 			// Check new num_readers will be valid
 			// TODO: check process releasing actually has a read lock (check filp->f_flags)
@@ -323,7 +379,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				// TODO: wake up wait queue and serve next ticket
 			}
 			// Release mutex
-			spin_unlock(&mutex);
+			spin_unlock(&(d->mutex));
 		}
 		
 		// Your code here (instead of the next line).
@@ -332,6 +388,22 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 	} else
 		r = -ENOTTY; /* unknown command */
 	return r;
+}
+
+unsigned skip_invalid_tickets(unsigned next_ticket, ticket_list_t invalid_tickets) {
+	unsigned return_ticket;
+	// TODO:
+	// For each ticket in linked list
+		// If next_ticket matches any tickets... (recurse)
+			// return_ticket = skip_invalid_tickets(next_ticket+1, struct list_head invalid_tickets)
+}
+
+void add_ticket_to_list(unsigned new_ticket, ticket_list_t ticket_list) {
+	// TODO:
+	// Allocate memory for new ticket
+	// Get pointer to list element
+	// Add to tail of ticket_list
+	list_add_tail(new, &(ticket_list.list));
 }
 
 
@@ -344,8 +416,9 @@ static void osprd_setup(osprd_info_t *d)
 	osp_spin_lock_init(&d->mutex);
 	d->ticket_head = d->ticket_tail = 0;
 	/* Add code here if you add fields to osprd_info_t. */
-	d->num_readers = 0;
-	d->num_writers = 0;
+	d->write_lock_pids = 0;
+	INIT_LIST_HEAD(&(d->read_lock_pids.list));
+	INIT_LIST_HEAD(&(d->invalid_tickets.list));
 }
 
 
