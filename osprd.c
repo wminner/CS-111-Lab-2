@@ -39,6 +39,8 @@ MODULE_AUTHOR("Christie Mathews & Wesley Minner");
 
 #define OSPRD_MAJOR	222
 
+#define REMOVE_PID 64	// Used to remove the pid when scanning through pid list
+
 /* This module parameter controls how big the disk will be.
  * You can specify module parameters when you load the module,
  * as an argument to insmod: "insmod osprd.ko nsectors=4096" */
@@ -99,7 +101,7 @@ static osprd_info_t osprds[NOSPRD];
 unsigned skip_invalid_tickets(unsigned next_ticket, ticket_list_t *invalid_tickets);
 int add_to_ticket_list(unsigned new_ticket, ticket_list_t *ticket_list);
 int add_to_pid_list(pid_t new_pid, pid_list_t *pid_list);
-int remove_from_pid_list(pid_t rm_pid, pid_list_t *pid_list);
+int pid_in_pid_list(pid_t rm_pid, pid_list_t *pid_list, int flag);
 
 /*
  * file2osprd(filp)
@@ -161,7 +163,6 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 	if ( req_type == WRITE ) {
 		memcpy( (void*) data_offset, (void*) req->buffer, bytes_to_rw );
 	}
-	//eprintk("Should process request...\n");
 
 	end_request(req, 1);
 }
@@ -187,14 +188,11 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		osprd_info_t *d = file2osprd(filp);
 		int filp_writable = filp->f_mode & FMODE_WRITE;
 
-		// EXERCISE: If the user closes a ramdisk file that holds
+		// EXERCISE (DONE): If the user closes a ramdisk file that holds
 		// a lock, release the lock.  Also wake up blocked processes
 		// as appropriate.
 
 		if (filp_writable) {	// If writer...
-			
-			// TODO deadlock detection
-
 			osp_spin_lock(&d->mutex);
 			// If write lock was set and pid matched current pid...
 			if ( d->write_lock_pids == current->pid ) {
@@ -205,13 +203,10 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 			osp_spin_unlock(&d->mutex);
 
 		} else {	// If reader...
-			
-			// TODO deadlock detection
-
 			osp_spin_lock(&d->mutex);
 			// If read lock was set and pid matched one of the read lock pids...
 			// Look through read lock list for current pid and remove it if found
-			if ( remove_from_pid_list(current->pid, &d->read_lock_pids) ) {
+			if ( pid_in_pid_list(current->pid, &d->read_lock_pids, REMOVE_PID) ) {
 				filp->f_flags ^= F_OSPRD_LOCKED;
 				wake_up_all(&d->blockq);
 			}
@@ -244,7 +239,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 	if (cmd == OSPRDIOCACQUIRE) {
 
-		// EXERCISE: Lock the ramdisk.
+		// EXERCISE (DONE): Lock the ramdisk.
 		//
 		// If *filp is open for writing (filp_writable), then attempt
 		// to write-lock the ramdisk; otherwise attempt to read-lock
@@ -279,19 +274,19 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// (Some of these operations are in a critical section and must
 		// be protected by a spinlock; which ones?)
 
-		// For our implementation, define...
-		// 	 ticket_head as front of the line (next to be served)
-		// 	 ticket_tail as back of the line (last to be served)
-		osp_spin_lock(&d->mutex);
-		local_ticket = d->ticket_tail;	// Give process end of the line ticket
-		d->ticket_tail++;				// Extend end of line, prepping for next process
-		osp_spin_unlock(&d->mutex);
-
 		if (filp_writable) {	// Write-lock
 
-			// Deadlock detection (don't allow writer to lock twice)
+			// Deadlock detection (don't allow same writer to lock twice)
 			if (current->pid == d->write_lock_pids)
 				return -EDEADLK;
+
+			// For our implementation, define...
+			// 	 ticket_head as front of the line (next to be served)
+			// 	 ticket_tail as back of the line (last to be served)
+			osp_spin_lock(&d->mutex);
+			local_ticket = d->ticket_tail;	// Give process end of the line ticket
+			d->ticket_tail++;				// Extend end of line, prepping for next process
+			osp_spin_unlock(&d->mutex);
 
 			// Don't wait condition: if this process is being served and there are no writing or reading pids; otherwise wait
 			if ( wait_event_interruptible(d->blockq, d->ticket_head == local_ticket && d->write_lock_pids == 0 && list_empty(&d->read_lock_pids.list)) ) {
@@ -306,10 +301,8 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					wake_up_all(&d->blockq);
 				} else {	// Else if this process (dead) not next in line...
 					// Add current ticket to invalid list
-					if ( add_to_ticket_list(local_ticket, &d->invalid_tickets) < 0 ) {
+					if ( add_to_ticket_list(local_ticket, &d->invalid_tickets) < 0 )
 						eprintk("Error: could not allocate memory.\n");
-						return -EINVAL;
-					}
 				}
 
 				osp_spin_unlock(&d->mutex);
@@ -319,6 +312,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				
 				// Set writing pid to current pid (list of one)
 				osp_spin_lock(&d->mutex);
+				if (d->write_lock_pids == 0)
 				d->write_lock_pids = current->pid;
 
 				// Serve next ticket
@@ -329,7 +323,17 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			}
 		} else {	// Read-lock
 
-			// TODO deadlock detection (none?)
+			// Deadlock detection (don't allow same reader to lock twice)
+			if ( pid_in_pid_list(current->pid, &d->read_lock_pids, 0) )
+				return -EDEADLK;
+
+			// For our implementation, define...
+			// 	 ticket_head as front of the line (next to be served)
+			// 	 ticket_tail as back of the line (last to be served)
+			osp_spin_lock(&d->mutex);
+			local_ticket = d->ticket_tail;	// Give process end of the line ticket
+			d->ticket_tail++;				// Extend end of line, prepping for next process
+			osp_spin_unlock(&d->mutex);
 
 			// Don't wait condition: if this process is being served and there are no writing pids; otherwise wait
 			if ( wait_event_interruptible(d->blockq, d->ticket_head == local_ticket && d->write_lock_pids == 0) ) {
@@ -344,10 +348,8 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 					wake_up_all(&d->blockq);
 				} else {	// Else if this process (dead) not next in line...
 					// Add current ticket to invalid list
-					if ( add_to_ticket_list(local_ticket, &d->invalid_tickets) < 0 ) {
+					if ( add_to_ticket_list(local_ticket, &d->invalid_tickets) < 0 )
 						eprintk("Error: could not allocate memory.\n");
-						return -EINVAL;
-					}
 				}
 
 				osp_spin_unlock(&d->mutex);
@@ -357,10 +359,8 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 				// Add pid to reading pid list
 				osp_spin_lock(&d->mutex);
-				if ( add_to_pid_list(current->pid, &d->read_lock_pids) < 0 ) {
+				if ( add_to_pid_list(current->pid, &d->read_lock_pids) < 0 )
 					eprintk("Error: could not allocate memory.\n");
-					return -EINVAL;
-				}
 
 				// Serve next ticket
 				d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &d->invalid_tickets);
@@ -369,10 +369,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 				osp_spin_unlock(&d->mutex);
 			}
 		}
-
-		// eprintk("Attempting to acquire\n");
-		// r = -ENOTTY;
-
 	} else if (cmd == OSPRDIOCTRYACQUIRE) {
 
 		// EXERCISE: ATTEMPT to lock the ramdisk.
@@ -388,7 +384,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 	} else if (cmd == OSPRDIOCRELEASE) {
 
-		// EXERCISE: Unlock the ramdisk.
+		// EXERCISE (DONE): Unlock the ramdisk.
 		//
 		// If the file hasn't locked the ramdisk, return -EINVAL.
 		// Otherwise, clear the lock from filp->f_flags, wake up
@@ -396,9 +392,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// you need, and return 0.
 
 		if (filp_writable) {	// If writer...
-			
-			// TODO deadlock detection
-
 			osp_spin_lock(&d->mutex);
 			// If write lock was set and pid matched current pid...
 			if ( d->write_lock_pids == current->pid ) {
@@ -412,13 +405,10 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			osp_spin_unlock(&d->mutex);
 
 		} else {	// If reader...
-			
-			// TODO deadlock detection
-
 			osp_spin_lock(&d->mutex);
 			// If read lock was set and pid matched one of the read lock pids...
 			// Look through read lock list for current pid and remove it if found
-			if ( remove_from_pid_list(current->pid, &d->read_lock_pids) ) {
+			if ( pid_in_pid_list(current->pid, &d->read_lock_pids, REMOVE_PID) ) {
 				filp->f_flags ^= F_OSPRD_LOCKED;
 				wake_up_all(&d->blockq);
 			} else {
@@ -427,10 +417,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			}
 			osp_spin_unlock(&d->mutex);
 		}
-		
-		// Your code here (instead of the next line).
-		// r = -ENOTTY;
-
 	} else
 		r = -ENOTTY; /* unknown command */
 	return r;
@@ -497,7 +483,7 @@ int add_to_pid_list(pid_t new_pid, pid_list_t *pid_list) {
 		return -1;
 }
 
-int remove_from_pid_list(pid_t rm_pid, pid_list_t *pid_list) {
+int pid_in_pid_list(pid_t rm_pid, pid_list_t *pid_list, int flag) {
 	struct list_head *ptr;
 	pid_list_t *entry;
 
@@ -511,9 +497,11 @@ int remove_from_pid_list(pid_t rm_pid, pid_list_t *pid_list) {
 		
 		// If rm_pid matches any pid in list
 		if ( entry->pid_num == rm_pid ) {
-			// Remove it from list, free memory, and return 1
-			list_del(&entry->list);
-			kfree((void*) entry);
+			if (flag == REMOVE_PID) {
+				// Remove it from list and free memory
+				list_del(&entry->list);
+				kfree((void*) entry);
+			}
 			return 1;
 		}
 	}		
