@@ -191,13 +191,33 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		// a lock, release the lock.  Also wake up blocked processes
 		// as appropriate.
 
-		// Your code here.
+		if (filp_writable) {	// If writer...
+			
+			// TODO deadlock detection
 
-		// This line avoids compiler warnings; you may remove it.
-		(void) filp_writable, (void) d;
+			osp_spin_lock(&d->mutex);
+			// If write lock was set and pid matched current pid...
+			if ( d->write_lock_pids == current->pid ) {
+				d->write_lock_pids = 0;		// Remove pid from writers list
+				filp->f_flags ^= F_OSPRD_LOCKED;	// Clear LOCKED flag
+				wake_up_all(&d->blockq);
+			}
+			osp_spin_unlock(&d->mutex);
 
+		} else {	// If reader...
+			
+			// TODO deadlock detection
+
+			osp_spin_lock(&d->mutex);
+			// If read lock was set and pid matched one of the read lock pids...
+			// Look through read lock list for current pid and remove it if found
+			if ( remove_from_pid_list(current->pid, &d->read_lock_pids) ) {
+				filp->f_flags ^= F_OSPRD_LOCKED;
+				wake_up_all(&d->blockq);
+			}
+			osp_spin_unlock(&d->mutex);
+		}
 	}
-
 	return 0;
 }
 
@@ -219,9 +239,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 	// is file open for writing?
 	int filp_writable = (filp->f_mode & FMODE_WRITE) != 0;
-
-	// This line avoids compiler warnings; you may remove it.
-	(void) filp_writable, (void) d;
 
 	// Set 'r' to the ioctl's return value: 0 on success, negative on error
 
@@ -516,7 +533,9 @@ static void osprd_setup(osprd_info_t *d)
 	/* Add code here if you add fields to osprd_info_t. */
 	d->write_lock_pids = 0;
 	INIT_LIST_HEAD(&d->read_lock_pids.list);
+	d->read_lock_pids.pid_num = 0;
 	INIT_LIST_HEAD(&d->invalid_tickets.list);
+	d->invalid_tickets.ticket_num = -1;
 }
 
 
