@@ -323,10 +323,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			}
 		} else {	// Read-lock
 
-			// Deadlock detection (don't allow same reader to lock twice)
-			if ( pid_in_pid_list(current->pid, &d->read_lock_pids, 0) )
-				return -EDEADLK;
-
 			// For our implementation, define...
 			// 	 ticket_head as front of the line (next to be served)
 			// 	 ticket_tail as back of the line (last to be served)
