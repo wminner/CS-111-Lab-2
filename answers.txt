@@ -21,26 +21,29 @@ Email: wesleyminner@gmail.com
 
 # Add any other information you'd like us to have below this line.
 
+
 Tasks Completed:
 * osprd_process_request function
 	read (-r)
 	write (-w)
+* osprd_ioctrl function
+	acquire (-l)
+	release
+* osprd_close_last function
+
 
 TODO:
-* osprd_close_last function
-	close ramdisk
 * osprd_ioctl function
-	lock spin (-l)
-	lock tryagain (-L)
-	lock release
+	tryacquire (-L)
 * Deadlocks
 	add TA's test case to tester script:
 		"echo foo | ./osprdaccess -w -l /dev/osprda /dev/osprda"
-	implement fix for test case
+	implement fix (if necessary) for this test case
 
 
 Notes:
-* N/A
+* Tests Passed: 1-11, 13-15
+* Tests Failed: 12, 16, 17, (18)
 
 
 Known Issues:
