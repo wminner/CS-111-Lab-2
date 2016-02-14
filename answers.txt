@@ -46,3 +46,6 @@ Notes:
 Known Issues:
 * Test cases 16 and 17 fail for an unknown reason.  By extending the 2nd kill's
   sleep time, both cases will work consistently.  See Piazza @243 for more info.
+  Sleep/delay timing seems to be not accurate enough for sub-0.5-second timing.
+* Test case 6 is inconsistent.  Sleep/delay timing seems to be not accurate 
+  enough for sub-0.5-second timing.
