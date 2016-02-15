@@ -380,14 +380,14 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 		osp_spin_lock(&d->mutex);
 		local_ticket = d->ticket_tail;	// last ticket served
-		d->ticket_tail++;				// another ticket served
+		d->ticket_tail++;		// another ticket served
 		osp_spin_unlock(&d->mutex);
 
 		if (filp_writable) {	// Write-lock
 
 			// if there are no writing or reading pids:
 			osp_spin_lock(&d->mutex);
-			if ( d->write_lock_pids != 0 && !list_empty(&d->read_lock_pids.list) ) {
+			if ( d->write_lock_pids != 0 || !list_empty(&d->read_lock_pids.list) ) {
 				
 				if ( d->ticket_head == local_ticket ) {
 					// Process next in line-Get next ticket, skipping invalid ones
