@@ -373,10 +373,78 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// block.  If OSPRDIOCACQUIRE would block or return deadlock,
 		// OSPRDIOCTRYACQUIRE should return -EBUSY.
 		// Otherwise, if we can grant the lock request, return 0.
+		
+		// Deadlock detection
+		if (current->pid == d->write_lock_pids)
+			return -EBUSY;
 
-		// Your code here (instead of the next two lines).
-		eprintk("Attempting to try acquire\n");
-		r = -ENOTTY;
+		osp_spin_lock(&d->mutex);
+		local_ticket = d->ticket_tail;	// last ticket served
+		d->ticket_tail++;				// another ticket served
+		osp_spin_unlock(&d->mutex);
+
+		if (filp_writable) {	// Write-lock
+
+			// if there are no writing or reading pids:
+			osp_spin_lock(&d->mutex);
+			if ( d->write_lock_pids != 0 && !list_empty(&d->read_lock_pids.list) ) {
+				
+				if ( d->ticket_head == local_ticket ) {
+					// Process next in line-Get next ticket, skipping invalid ones
+					d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &d->invalid_tickets);
+				} else { 
+					// Process not next in line-add current ticket to invalid list
+					if ( add_to_ticket_list(local_ticket, &d->invalid_tickets) < 0 )
+						eprintk("Error: could not allocate memory.\n");
+				}
+				osp_spin_unlock(&d->mutex);
+				r = -EBUSY;
+
+			} else {
+				// Grant write-lock
+				filp->f_flags |= F_OSPRD_LOCKED;
+				
+				// write pid == current pid
+				if (d->write_lock_pids == 0)
+					d->write_lock_pids = current->pid;
+
+				// Serve next ticket
+				d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &d->invalid_tickets);
+				osp_spin_unlock(&d->mutex);
+			}
+
+		} else {	// Read-lock
+			// If no process has the write_lock
+			osp_spin_lock(&d->mutex);
+			if ( d->write_lock_pids != 0) {
+				
+				if ( d->ticket_head == local_ticket ) {
+					// Process next in line-Get next ticket, skipping invalid ones
+					d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &d->invalid_tickets);
+				} else { 
+					// Process not next in line-add current ticket to invalid list
+					if ( add_to_ticket_list(local_ticket, &d->invalid_tickets) < 0 )
+						eprintk("Error: could not allocate memory.\n");
+				}
+				osp_spin_unlock(&d->mutex);
+				r = -EBUSY;
+
+			} else {	
+				// Grant read-lock
+				filp->f_flags |= F_OSPRD_LOCKED;
+
+				// Add pid to read_lock_pids_list
+				if ( add_to_pid_list(current->pid, &d->read_lock_pids) < 0 )
+					eprintk("Error: could not allocate memory.\n");
+
+				// Serve next ticket
+				d->ticket_head = skip_invalid_tickets(d->ticket_head+1, &d->invalid_tickets);
+				osp_spin_unlock(&d->mutex);
+			}
+		}
+		// eprintk("Attempting to try acquire\n");
+		// r = -ENOTTY;
+
 
 	} else if (cmd == OSPRDIOCRELEASE) {
 
