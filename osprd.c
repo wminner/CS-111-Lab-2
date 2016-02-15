@@ -505,6 +505,10 @@ unsigned skip_invalid_tickets(unsigned next_ticket, ticket_list_t *invalid_ticke
 		
 		// If next_ticket matches any invalid tickets...
 		if ( entry->ticket_num == next_ticket ) {
+			// Remove invalid ticket from list and free memory
+			//   because we passed over it successfully
+			list_del(&entry->list);
+			kfree((void*) entry);
 			// Recurse with incremented next_ticket
 			return_ticket = skip_invalid_tickets(next_ticket+1, invalid_tickets);
 			break;
