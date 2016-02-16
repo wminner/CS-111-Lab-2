@@ -29,23 +29,28 @@ Tasks Completed:
 	deadlocks avoided
 * osprd_ioctrl function
 	acquire (-l)
+	tryacquire (-L)
 	release
 * osprd_close_last function
 
 
 TODO:
-* osprd_ioctl function
-	tryacquire (-L)
+* N/A
 
 
 Notes:
-* Tests Passed: 1-11, 13-15, 18
-* Tests Failed: 12, 16, 17
+* Tests Passed: 1-18* (see known issues)
+* Test 18 was added to test deadlocking (writer tries to lock twice)
 
 
 Known Issues:
-* Test cases 16 and 17 fail for an unknown reason.  By extending the 2nd kill's
-  sleep time, both cases will work consistently.  See Piazza @243 for more info.
-  Sleep/delay timing seems to be not accurate enough for sub-0.5-second timing.
-* Test case 6 is inconsistent.  Sleep/delay timing seems to be not accurate 
-  enough for sub-0.5-second timing.
+* Test case 6 is inconsistent on Wesley's computer, but consistently succeeds 
+  on Christie's computer.  Sleep/delay timing seems to be not accurate enough 
+  for sub-0.5-second timing on some hardware or emulation software 
+  configurations.  See Piazza @247 for more info.
+* Test cases 16 and 17 fail for an unknown reason on Wesley's computer using 
+  virtual box, but succeed on Christie's computer consistently. By extending the
+  2nd kill's sleep time, both cases will work consistently on Wesley's computer. 
+  See Piazza @243 for more info.  Sleep/delay timing seems to be not accurate 
+  enough for sub-0.5-second timing on some hardware or emulation software 
+  configurations.
