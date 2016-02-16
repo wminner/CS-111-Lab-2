@@ -1,5 +1,7 @@
 *~
 \#*\#
+*.gz
+*.tar
 
 .osprd.o.d
 osprdaccess
