@@ -1,0 +1,43 @@
+# Partner 1
+Name: Christie Mathews
+Student ID: 104404412
+Email: mathews.christie@gmail.com 
+
+# Partner 2
+Name: Wesley Minner
+Student ID: 703549234
+Email: wesleyminner@gmail.com
+
+
+Tasks Completed:
+* osprd_process_request function
+	read (-r)
+	write (-w)
+	deadlocks avoided
+* osprd_ioctrl function
+	acquire (-l)
+	tryacquire (-L)
+	release
+* osprd_close_last function
+
+
+TODO:
+* N/A
+
+
+Notes:
+* Tests Passed: 1-18* (see known issues)
+* Test 18 was added to test deadlocking (writer tries to lock twice)
+
+
+Known Issues:
+* Test case 6 is inconsistent on Wesley's computer, but consistently succeeds 
+  on Christie's computer.  Sleep/delay timing seems to be not accurate enough 
+  for sub-0.5-second timing on some hardware or emulation software 
+  configurations.  See Piazza @247 for more info.
+* Test cases 16 and 17 fail for an unknown reason on Wesley's computer using 
+  virtual box, but succeed on Christie's computer consistently. By extending the
+  2nd kill's sleep time, both cases will work consistently on Wesley's computer. 
+  See Piazza @243 for more info.  Sleep/delay timing seems to be not accurate 
+  enough for sub-0.5-second timing on some hardware or emulation software 
+  configurations.
